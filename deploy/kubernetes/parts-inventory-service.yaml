@@ -1,0 +1,56 @@
+# parts-inventory-service — Deployment + Service + HPA.
+# Config arrives via environment variables (12-Factor III); secrets are referenced, never embedded.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: parts-inventory-service
+  namespace: automotive
+  labels: { app: parts-inventory-service, app.kubernetes.io/part-of: open-automotive }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: parts-inventory-service } }
+  template:
+    metadata:
+      labels: { app: parts-inventory-service }
+    spec:
+      containers:
+        - name: parts-inventory-service
+          image: quay.io/open-industries/parts-inventory-service:latest  # replaced by the promoted release digest
+          ports: [{ containerPort: 8082, name: http }]
+          env:
+            - { name: HTTP_PORT, value: "8082" }
+            - { name: LOG_LEVEL, value: "INFO" }
+            - name: DB_URL
+              valueFrom: { secretKeyRef: { name: parts-inventory-service-db, key: url, optional: true } }
+          resources:
+            requests: { cpu: "250m", memory: "256Mi" }
+            limits: { cpu: "500m", memory: "512Mi" }
+          livenessProbe:
+            httpGet: { path: /q/health/live, port: http }
+            initialDelaySeconds: 10
+          readinessProbe:
+            httpGet: { path: /q/health/ready, port: http }
+            initialDelaySeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: parts-inventory-service
+  namespace: automotive
+  labels: { app: parts-inventory-service }
+spec:
+  selector: { app: parts-inventory-service }
+  ports: [{ name: http, port: 8082, targetPort: http }]
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: parts-inventory-service
+  namespace: automotive
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: parts-inventory-service }
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 70 } }
