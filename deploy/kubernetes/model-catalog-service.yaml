@@ -1,0 +1,56 @@
+# model-catalog-service — Deployment + Service + HPA.
+# Config arrives via environment variables (12-Factor III); secrets are referenced, never embedded.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: model-catalog-service
+  namespace: automotive
+  labels: { app: model-catalog-service, app.kubernetes.io/part-of: open-automotive }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: model-catalog-service } }
+  template:
+    metadata:
+      labels: { app: model-catalog-service }
+    spec:
+      containers:
+        - name: model-catalog-service
+          image: quay.io/open-industries/model-catalog-service:latest  # replaced by the promoted release digest
+          ports: [{ containerPort: 8084, name: http }]
+          env:
+            - { name: HTTP_PORT, value: "8084" }
+            - { name: LOG_LEVEL, value: "INFO" }
+            - name: DB_URL
+              valueFrom: { secretKeyRef: { name: model-catalog-service-db, key: url, optional: true } }
+          resources:
+            requests: { cpu: "250m", memory: "256Mi" }
+            limits: { cpu: "500m", memory: "512Mi" }
+          livenessProbe:
+            httpGet: { path: /q/health/live, port: http }
+            initialDelaySeconds: 10
+          readinessProbe:
+            httpGet: { path: /q/health/ready, port: http }
+            initialDelaySeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: model-catalog-service
+  namespace: automotive
+  labels: { app: model-catalog-service }
+spec:
+  selector: { app: model-catalog-service }
+  ports: [{ name: http, port: 8084, targetPort: http }]
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: model-catalog-service
+  namespace: automotive
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: model-catalog-service }
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 70 } }
